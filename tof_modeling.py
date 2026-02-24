@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from geometry import Point, Sphere, distance_to
+from geometry import Point, Sphere, Triangle, Figure, distance_to
 
 
 class Ray:
@@ -45,6 +45,107 @@ class Ray:
             t_min = min(roots)
 
             return Point(self.start.coords + t_min * self.direction)
+        
+    def triangle_intersect(self, triangle: Triangle) -> Point | None:
+        """
+        Method for finding the nearest point of 
+        intersection with a triangle.
+
+        Args: 
+            triangle: triangle for intersection with ray.
+
+        Returns: the nearest point of intersection in 3D.
+        """
+        D = triangle.D
+
+        a = np.dot(self.direction, triangle.normal)
+        b = -D - np.dot(self.start.coords, triangle.normal)
+        
+        if np.allclose(a, 0):
+            if np.allclose(b, 0):
+                if triangle.check_point_in_triangle(self.start):
+                    return self.start
+
+                vertices = triangle.vertices
+                intersections = []
+
+                for i in range(3):
+                    p1 = vertices[i].coords
+                    p2 = vertices[(i + 1) % 3].coords
+
+                    p = self.get_triangle_edge_intersect(p1, p2)
+
+                    if p is not None:
+                        dist = distance_to(self.start, p)
+                        intersections.append((dist, p))
+
+                if not intersections:
+                    return None
+                
+                intersections.sort(key=lambda x: x[0])
+                return intersections[0][1]
+
+            else:
+                return None
+
+        t = b / a
+
+        if t < 0:
+            return None
+
+        point = Point(self.start.coords + t * self.direction)
+        if (triangle.check_point_in_triangle(point)):
+            return point
+        return None
+    
+    def get_triangle_edge_intersect(self, p1: Point, p2: Point) -> Point | None:
+        """
+        Method for getting intersect of ray and triangle edge.
+
+        Args:
+            p1, p2: points of triangle edge.
+
+        Returns: point if intersect exists, else - None.
+        """
+        vec = p1.coords - p2.coords
+
+        A = np.column_stack((self.direction, -vec))
+        b = p1.coords - self.start.coords
+
+        x, residuals, rank, _ = np.linalg.lstsq(A, b, rcond=None)
+
+        if rank < 2:
+            return None
+        
+        t, u = x
+
+        if t >= -1e-10 and 0 <= u <= 1:
+            if residuals.size > 0 and residuals[0] < 1e-8:
+                return Point(self.start.coords + t * self.direction)
+            
+        return None
+    
+    def get_nearest_point_of_figure(self, figure: Figure) -> Point | None:
+        """
+        Method for getting nearest point of figure.
+
+        Args:
+            figure: figure which consists of triangles.
+
+        Returns: The nearest point of figure.
+        """
+        nearest_point = None
+        nearest_dist = np.inf
+
+        for triangle in figure.triangles:
+            point = self.triangle_intersect(triangle)
+            if point is not None:
+                dist = distance_to(point, self.start)
+                if dist < nearest_dist:
+                    nearest_dist = dist
+                    nearest_point = point
+
+        return nearest_point
 
 
 class ToFCamera:
@@ -112,19 +213,25 @@ class ToFCamera:
 
         return rays
     
-    def get_points_and_distances_to_sphere(self, sphere: Sphere) -> tuple[np.ndarray, np.ndarray]:
+    def get_points_and_distances_to_object(self, geo_object: Sphere | Triangle | Figure) -> tuple[np.ndarray, np.ndarray]:
         """
-        Method for getting points of the sphere and distances to the sphere.
+        Method for getting points of the geo object and distances to the geo object.
 
         Args:
-            sphere: Sphere for which distances are calculated.
+            geo_object: object for which distances are calculated.
 
-        Returns: Array of points of the sphere and array of distances to the sphere.
+        Returns: Array of points of the geo object and array of distances to the geo object.
         """
         distances = []
         points = []
         for ray in self.generate_rays():
-            point = ray.sphere_intersect(sphere)
+            if type(geo_object) == Sphere:
+                point = ray.sphere_intersect(geo_object)
+            elif type(geo_object) == Triangle:
+                point = ray.triangle_intersect(geo_object)
+            else:
+                point = ray.get_nearest_point_of_figure(geo_object)
+
             if point is None:
                 distances.append(np.nan)
             else:
@@ -137,29 +244,29 @@ class ToFCamera:
 
         return result_points, result_distances
     
-    def get_time(self, sphere: Sphere) -> np.ndarray:
+    def get_time(self, geo_object: Sphere | Triangle | Figure) -> np.ndarray:
         """
         Method for getting time spent by light.
 
         Args:
-            sphere: sphere for which times are calculated.
+            geo_object: object for which times are calculated.
 
         Returns: Array of times spent by light.
         """
         c = 299792458   # speed of the light
-        _, distances = self.get_points_and_distances_to_sphere(sphere)
+        _, distances = self.get_points_and_distances_to_object(geo_object)
         times = 2 * distances / c
         return times
 
-    def visualize_depth_map(self, sphere: Sphere) -> None:
+    def visualize_depth_map(self, geo_object: Sphere | Triangle | Figure) -> None:
         """
         Method for visualizing depth map.
 
         Args:
-            sphere: sphere in 3D for ToF camera.
+            geo_object: object in 3D for ToF camera.
         """
 
-        _, depth_map = self.get_points_and_distances_to_sphere(sphere)
+        _, depth_map = self.get_points_and_distances_to_object(geo_object)
         depth_map = depth_map.reshape((self.width, self.height))
 
         figure, axis = plt.subplots(figsize=(8, 6))
@@ -167,11 +274,9 @@ class ToFCamera:
         
         if np.all(np.isnan(depth_map)):
             masked_depth = np.ma.masked_where(np.ones_like(depth_map, dtype=bool), depth_map)
-            map = axis.imshow(masked_depth, cmap=plt.cm.inferno)
+            map = axis.imshow(masked_depth, cmap='plasma_r')
         else:
-            cmap = plt.cm.inferno.copy()
-            cmap.set_bad(color="none")
-            map = axis.imshow(depth_map, cmap=cmap, vmin=np.nanmin(depth_map), vmax=np.nanmax(depth_map))
+            map = axis.imshow(depth_map, cmap='plasma_r', vmin=np.nanmin(depth_map), vmax=np.nanmax(depth_map))
 
         axis.set_title('ToF camera depth map')
         axis.axis("image")
@@ -180,15 +285,15 @@ class ToFCamera:
 
         plt.show()
 
-    def visualize_point_cloud(self, sphere: Sphere) -> None:
+    def visualize_point_cloud(self, geo_object: Sphere | Triangle | Figure) -> None:
         """
         Method for visualizing point cloud.
 
         Args:
-            sphere: sphere in 3D for ToF camera.
+            geo_object: object in 3D for ToF camera.
         """
 
-        points, _ = self.get_points_and_distances_to_sphere(sphere)
+        points, _ = self.get_points_and_distances_to_object(geo_object)
 
         figure = plt.figure(figsize=(8, 6))
         axis: plt.Axes = figure.add_subplot(projection='3d')
@@ -231,5 +336,11 @@ if __name__ == "__main__":
         center=Point(np.array([0, 0, 6]))
     )
 
-    tof_camera.visualize_depth_map(sphere)
-    tof_camera.visualize_point_cloud(sphere)
+    triangle = Triangle(
+        Point(np.array([-0.5, -0.5, 1])),
+        Point(np.array([0.5, -0.5, 1])),
+        Point(np.array([0, 0.5, 2]))
+    )
+
+    tof_camera.visualize_depth_map(triangle)
+    tof_camera.visualize_point_cloud(triangle)

@@ -34,10 +34,114 @@ class Sphere:
     """
     Class for representing sphere in 3D.
     """
-
     def __init__(self, R: float, center: Point) -> None:
         self.R = R
         self.center = center
+
+
+class Triangle:
+    """
+    Class for representing triangle in 3D.
+    """
+    def __init__(self, p1: Point, p2: Point, p3: Point) -> None:
+        self._p1 = p1
+        self._p2 = p2
+        self._p3 = p3
+
+        self._vertices = (p1, p2, p3)
+
+        v1 = p2.coords - p1.coords
+        v2 = p3.coords - p1.coords
+
+        self._normal = np.cross(v1, v2)
+
+        if np.allclose(self._normal, np.zeros(3)):
+            raise ValueError("Points are on the same line.")
+
+        self._normal = self._normal / np.linalg.norm(self._normal)
+
+        self._A, self._B, self._C = self._normal
+        self._D = -np.dot(self._normal, p1.coords)
+
+    @property
+    def vertices(self) -> tuple[Point]:
+        return self._vertices
+
+    @property
+    def normal(self) -> np.ndarray:
+        return self._normal
+    
+    @property
+    def coefficients(self) -> tuple[float]:
+        return self._A, self._B, self._C, self._D
+    
+    @property
+    def A(self) -> float:
+        return self._A
+    
+    @property
+    def B(self) -> float:
+        return self._B
+    
+    @property
+    def C(self) -> float:
+        return self._C
+    
+    @property
+    def D(self) -> float:
+        return self._D
+
+    def __str__(self) -> str:
+        return f"{self._A}x + {self._B}y + {self._C}z + {self._D} = 0"
+
+    def check_point_in_triangle(self, p: Point) -> bool:
+        """
+        Check if point located in triagnle or not.
+        """
+        eps = 1e-10
+        x, y, z = p.coords
+        check = self.A * x + self.B * y + self.C * z + self.D
+
+        if not np.allclose(check, 0, eps):
+            return False
+
+        v1 = self._p2.coords - self._p1.coords
+        v2 = self._p3.coords - self._p2.coords
+        v3 = self._p1.coords - self._p3.coords
+
+        v1_p = p.coords - self._p1.coords
+        v2_p = p.coords - self._p2.coords
+        v3_p = p.coords - self._p3.coords
+
+        cross_1 = np.cross(v1, v1_p)
+        cross_2 = np.cross(v2, v2_p)
+        cross_3 = np.cross(v3, v3_p)
+
+        sign_1 = np.dot(cross_1, self._normal)
+        sign_2 = np.dot(cross_2, self._normal)
+        sign_3 = np.dot(cross_3, self._normal)
+
+        positive = (sign_1 > eps) or (sign_2 > eps) or (sign_3 > eps)
+        negative = (sign_1 < -eps) or (sign_2 < -eps) or (sign_3 < -eps)
+
+        if negative and positive:
+            return False
+
+        return True
+
+
+class Figure:
+    """
+    Class for representing figure in 3D, which consists of 
+    triangles.
+    """
+    def __init__(self, triangles: list[Triangle]) -> None:
+        self._triangles = triangles
+
+    @property
+    def triangles(self) -> list[Triangle]:
+        return self._triangles
+
 
 def distance_to(p1: Point, p2: Point) -> float:
     """
