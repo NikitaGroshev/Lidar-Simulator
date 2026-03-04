@@ -1,8 +1,42 @@
 import numpy as np
-import matplotlib.pyplot as plt
 
-from tof_modeling import ToFCamera, Ray
+import stl_reader
+from tof_modeling import ToFCamera
 from geometry import Triangle, Point, Sphere, Figure
+
+from time import perf_counter
+
+
+def read_stl(stl_file: str) -> Figure:
+    """
+    Read stl to the figure.
+
+    Args:
+        stl_file: file name of stl
+
+    Returns: figure which consists of triangles.
+    """
+    vertices, index = stl_reader.read(stl_file)
+    triangles = []
+
+    counter = 0
+
+    for ind in index:
+        ind1, ind2, ind3 = ind
+
+        v1 = Point(vertices[ind1])
+        v2 = Point(vertices[ind2])
+        v3 = Point(vertices[ind3])
+
+        triangle = Triangle(v1, v2, v3)
+
+        counter += 1
+
+        triangles.append(triangle)
+
+    print(f"triangles count = {counter}")
+
+    return Figure(triangles)
 
 
 def simple_pyramid(camera: ToFCamera) -> None:
@@ -32,16 +66,19 @@ def simple_pyramid(camera: ToFCamera) -> None:
 
     figure = Figure([triangle_1, triangle_2, triangle_3, triangle_4])
 
-    camera.visualize_depth_map(figure)
-    camera.visualize_point_cloud(figure)
+    camera.get_points_and_distances_to_object(figure)
+    camera.visualize_depth_map()
+    camera.visualize_point_cloud()
 
 def simple_sphere(camera: ToFCamera, sphere: Sphere) -> None:
-    camera.visualize_depth_map(sphere)
-    camera.visualize_point_cloud(sphere)
+    camera.get_points_and_distances_to_object(sphere)
+    camera.visualize_depth_map()
+    camera.visualize_point_cloud()
 
 def simple_sphere(camera: ToFCamera, triangle: Triangle) -> None:
-    camera.visualize_depth_map(triangle)
-    camera.visualize_point_cloud(triangle)
+    camera.get_points_and_distances_to_object(triangle)
+    camera.visualize_depth_map()
+    camera.visualize_point_cloud()
 
 def difficult_figure(camera: ToFCamera) -> None:
     triangle_1 = Triangle(
@@ -96,18 +133,29 @@ def difficult_figure(camera: ToFCamera) -> None:
 
     figure = Figure(triangles)
 
-    camera.visualize_depth_map(figure)
-    camera.visualize_point_cloud(figure)
+    camera.get_points_and_distances_to_object(figure)
+    camera.visualize_depth_map()
+    camera.visualize_point_cloud()
 
 
 if __name__ == "__main__":
+    start = perf_counter()
+
+    figure = read_stl("low_poly_bear.stl")
+    figure_center = figure.get_center()
+
     tof_camera = ToFCamera(
-        position=Point(np.array([0, 0, -3])),
-        width=100,
-        height=100,
-        direction=np.array([0, 0, 1]),
+        position=Point(np.array([200, -20, 140])),
+        width=50,
+        height=50,
+        direction=figure_center.coords - np.array([200, -20, 140]),
         fov=60
     )
 
-    simple_pyramid(tof_camera)
-    difficult_figure(tof_camera)
+    tof_camera.get_points_and_distances_to_object(figure)
+    tof_camera.visualize_depth_map()
+    tof_camera.visualize_point_cloud()
+
+    end = perf_counter()
+
+    print(f"total time = {end - start}")

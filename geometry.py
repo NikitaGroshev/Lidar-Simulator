@@ -141,6 +141,18 @@ class Figure:
     @property
     def triangles(self) -> list[Triangle]:
         return self._triangles
+    
+    def get_center(self) -> Point:
+        """
+        Get the mean of all points of figure.
+        """
+        all_vertices = []
+        for triangle in self.triangles:
+            for vertex in triangle.vertices:
+                all_vertices.append(vertex.coords)
+
+        center = np.mean(np.array(all_vertices), axis=0)
+        return Point(center)
 
 
 def distance_to(p1: Point, p2: Point) -> float:

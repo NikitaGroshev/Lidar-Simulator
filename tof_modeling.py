@@ -1,7 +1,12 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import laspy
+
 from geometry import Point, Sphere, Triangle, Figure, distance_to
 
+from pypcd4 import pypcd4
+
+import tof_function_parallel as tfp
 
 class Ray:
     """
@@ -166,6 +171,8 @@ class ToFCamera:
         self.direction = direction
         self.width = width
         self.height = height
+        self.object_points = None
+        self.object_distances = None
 
     def generate_rays(self) -> list[Ray]:
         """
@@ -213,14 +220,13 @@ class ToFCamera:
 
         return rays
     
-    def get_points_and_distances_to_object(self, geo_object: Sphere | Triangle | Figure) -> tuple[np.ndarray, np.ndarray]:
+    def get_points_and_distances_to_object(self, geo_object: Sphere | Triangle | Figure) -> None:
         """
         Method for getting points of the geo object and distances to the geo object.
 
         Args:
             geo_object: object for which distances are calculated.
 
-        Returns: Array of points of the geo object and array of distances to the geo object.
         """
         distances = []
         points = []
@@ -242,31 +248,31 @@ class ToFCamera:
         result_distances = np.array(distances)
         result_points = np.array(points) if points else np.array([])
 
-        return result_points, result_distances
+        self.object_points = result_points 
+        self.object_distances = result_distances
     
-    def get_time(self, geo_object: Sphere | Triangle | Figure) -> np.ndarray:
+    def get_time(self) -> np.ndarray:
         """
         Method for getting time spent by light.
 
-        Args:
-            geo_object: object for which times are calculated.
-
         Returns: Array of times spent by light.
+
         """
         c = 299792458   # speed of the light
-        _, distances = self.get_points_and_distances_to_object(geo_object)
-        times = 2 * distances / c
+        if self.object_distances is None:
+            raise ValueError("Distances were not calculated")
+        times = 2 * self.object_distances / c
         return times
+        
 
-    def visualize_depth_map(self, geo_object: Sphere | Triangle | Figure) -> None:
+    def visualize_depth_map(self) -> None:
         """
         Method for visualizing depth map.
-
-        Args:
-            geo_object: object in 3D for ToF camera.
         """
+        if self.object_distances is None:
+            raise ValueError("Distances were not calculated")
 
-        _, depth_map = self.get_points_and_distances_to_object(geo_object)
+        depth_map = self.object_distances
         depth_map = depth_map.reshape((self.width, self.height))
 
         figure, axis = plt.subplots(figsize=(8, 6))
@@ -285,15 +291,14 @@ class ToFCamera:
 
         plt.show()
 
-    def visualize_point_cloud(self, geo_object: Sphere | Triangle | Figure) -> None:
+    def visualize_point_cloud(self) -> None:
         """
         Method for visualizing point cloud.
-
-        Args:
-            geo_object: object in 3D for ToF camera.
         """
+        if self.object_points is None:
+            raise ValueError("Points were not calculated")
 
-        points, _ = self.get_points_and_distances_to_object(geo_object)
+        points = self.object_points
 
         figure = plt.figure(figsize=(8, 6))
         axis: plt.Axes = figure.add_subplot(projection='3d')
@@ -321,13 +326,94 @@ class ToFCamera:
 
         plt.show()
 
+    def generate_rays_parallel(self):
+
+        rays_start, rays_direction = tfp.numba_generate_rays(
+            self.position.coords,
+            self.direction,
+            self.width,
+            self.height,
+            self.fov
+        )
+        return rays_start, rays_direction
+
+    def get_points_and_distances_to_object_parallel(self, geo_object):
+
+
+        rays_start, rays_direction = self.generate_rays_parallel()
+        
+        if isinstance(geo_object, Sphere):
+            object_type = 0
+            object_params = np.zeros(4)
+            object_params[:3] = geo_object.center.coords
+            object_params[3] = geo_object.R
+            
+        elif isinstance(geo_object, Triangle):
+            object_type = 1
+            object_params = np.zeros(13)
+            object_params[0:3] = geo_object.vertices[0].coords
+            object_params[3:6] = geo_object.vertices[1].coords
+            object_params[6:9] = geo_object.vertices[2].coords
+            object_params[9:12] = geo_object.normal
+            object_params[12] = geo_object.D
+            
+        elif isinstance(geo_object, Figure):
+            object_type = 2
+            n_triangles = len(geo_object.triangles)
+            object_params = np.zeros(n_triangles * 13)
+            
+            for i, triangle in enumerate(geo_object.triangles):
+                idx = i * 13
+                object_params[idx:idx+3] = triangle.vertices[0].coords
+                object_params[idx+3:idx+6] = triangle.vertices[1].coords
+                object_params[idx+6:idx+9] = triangle.vertices[2].coords
+                object_params[idx+9:idx+12] = triangle.normal
+                object_params[idx+12] = triangle.D
+        
+        distances, points = tfp.numba_process_all_rays(
+            rays_direction.shape[0],
+            rays_start, rays_direction,
+            object_type, object_params
+        )
+        
+        self.object_distances = distances
+        
+        valid_mask = ~np.isnan(points[:, 0])
+        self.object_points = points[valid_mask]
+
+    def write_pcd(self) -> None:
+        """
+        Write point cloud in pcd format.
+        """
+        if self.object_points is None:
+            raise ValueError("Points were not calculated")
+        pc = pypcd4.PointCloud.from_xyz_points(self.object_points)
+        pc.save("point_cloud.pcd")
+
+    def write_las(self) -> None:
+        """
+        Write point cloud in las format.
+        """
+        if self.object_points is None:
+            raise ValueError("Points were not calculated")
+        
+        header = laspy.LasHeader(point_format=3, version="1.2")
+        header.scales = np.array([0.0001, 0.0001, 0.0001])
+
+        las = laspy.LasData(header)
+
+        las.x = self.object_points[:, 0]
+        las.y = self.object_points[:, 1]
+        las.z = self.object_points[:, 2]
+
+        las.write("point_cloud.las")
 
 if __name__ == "__main__":
     tof_camera = ToFCamera(
-        position=Point(np.array([0, 0, 0])),
+        position=Point(np.array([0.0, 0.0, 0.0])),
         width=100,
         height=100,
-        direction=np.array([0, 0, 1]),
+        direction=np.array([0.0, 0.0, 1.0]),
         fov=60
     )
 
@@ -342,5 +428,6 @@ if __name__ == "__main__":
         Point(np.array([0, 0.5, 2]))
     )
 
-    tof_camera.visualize_depth_map(triangle)
-    tof_camera.visualize_point_cloud(triangle)
+    tof_camera.get_points_and_distances_to_object_parallel(triangle)
+    tof_camera.visualize_depth_map()
+    tof_camera.visualize_point_cloud()
