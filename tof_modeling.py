@@ -433,6 +433,10 @@ class ToFCamera:
 
         las.write("point_cloud.las")
 
+    @property
+    def points_and_distances(self) -> tuple[np.ndarray | None, np.ndarray | None]:
+        return self.object_distances, self.object_points
+
 if __name__ == "__main__":
     tof_camera = ToFCamera(
         position=Point(np.array([0.0, 0.0, 0.0])),
